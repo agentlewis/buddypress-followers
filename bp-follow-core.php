@@ -83,7 +83,7 @@ class BP_Follow_Component extends BP_Component {
 		if ( true === (bool) apply_filters( 'bp_follow_enable_users', true ) ) {
 			require( $this->path . '/users/hooks.php' );
 			require( $this->path . '/users/template.php' );
-			require( $this->path . '/users/notifications.php' );
+			//require( $this->path . '/users/notifications.php' );
 			require( $this->path . '/users/widgets.php' );
 
 			// Load AJAX code when an AJAX request is requested.
@@ -185,7 +185,7 @@ class BP_Follow_Component extends BP_Component {
 		add_action( 'bp_init', array( $this, 'register_global_cachegroups' ), 5 );
 
 		// register notification settings.
-		add_action( 'bp_init', array( $this, 'register_notification_settings' ) );
+		// add_action( 'bp_init', array( $this, 'register_notification_settings' ) );
 
 		// javascript hook.
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_scripts' ), 11 );

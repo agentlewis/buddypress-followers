@@ -78,7 +78,7 @@ function bp_follow_user_setup_nav( $main_nav = array(), $sub_nav = array() ) {
 	// BuddyBar compatibility.
 	add_action( 'bp_adminbar_menus', 'bp_follow_group_buddybar_items' );
 }
-add_action( 'bp_follow_setup_nav', 'bp_follow_user_setup_nav', 10, 2 );
+//add_action( 'bp_follow_setup_nav', 'bp_follow_user_setup_nav', 10, 2 );
 
 /**
  * Set up WP Toolbar / Admin Bar.
