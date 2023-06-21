@@ -1,23 +1,33 @@
-if ( typeof jq == "undefined" ) {
-	var jq = jQuery;
+var jq, profileHeader;
+if ( typeof jq === "undefined" ) {
+	jq = jQuery;
 }
 
 jq( function() {
-	var profileHeader   = jq("#item-buttons");
-	var memberLoop      = jq("#members-list").parent();
-	var groupMemberLoop = jq("#member-list").parent();
+	var memberLoop, groupMemberLoop,
+		buttonSelector = 'a';
 
-	profileHeader.on("click", ".follow-button a", function() {
+	if ( jq( 'body.bp-nouveau' ).length ) {
+		profileHeader   = jq("ul.member-header-actions"),
+		memberLoop      = jq("#members-dir-list").parent();
+		groupMemberLoop = jq("#members-group-list").parent();
+	} else {
+		profileHeader   = jq("#item-buttons"),
+		memberLoop      = jq("#members-list").parent(),
+		groupMemberLoop = jq("#member-list").parent();
+	}
+
+	profileHeader.on("click", ".follow-button " + buttonSelector, function() {
 		bp_follow_button_action( jq(this), 'profile' );
 		return false;
 	});
 
-	memberLoop.on("click", ".follow-button a", function() {
+	memberLoop.on("click", ".follow-button " + buttonSelector, function() {
 		bp_follow_button_action( jq(this), 'member-loop' );
 		return false;
 	});
 
-	groupMemberLoop.on("click", ".follow-button a", function() {
+	groupMemberLoop.on("click", ".follow-button " + buttonSelector, function() {
 		bp_follow_button_action( jq(this) );
 		return false;
 	});
@@ -53,7 +63,7 @@ function bp_follow_button_action( scope, context ) {
 	function(response) {
 		jq( link.parent()).fadeOut(200, function() {
 			// toggle classes
-			if ( action == 'unfollow' ) {
+			if ( action === 'unfollow' ) {
 				link.parent().removeClass( 'following' ).addClass( 'not-following' );
 			} else {
 				link.parent().removeClass( 'not-following' ).addClass( 'following' );
@@ -64,7 +74,7 @@ function bp_follow_button_action( scope, context ) {
 
 			// increase / decrease counts
 			var count_wrapper = false;
-			if ( context == 'profile' ) {
+			if ( context === 'profile' ) {
 				count_wrapper = jq("#user-members-followers span");
 
 			} else if ( context == 'member-loop' ) {
@@ -81,7 +91,7 @@ function bp_follow_button_action( scope, context ) {
 			if ( count_wrapper.length ) {
 				if ( action == 'unfollow' ) {
 					count_wrapper.text( ( count_wrapper.text() >> 0 ) - 1 );
-				} else if ( action == 'follow' ) {
+				} else if ( action === 'follow' ) {
 					count_wrapper.text( ( count_wrapper.text() >> 0 ) + 1 );
 				}
 			}

@@ -41,6 +41,7 @@ class BP_Follow_Blogs {
 		add_action( 'bp_after_member_blogs_content', 'BP_Follow_Blogs_Screens::user_blogs_inline_js' );
 		add_action( 'bp_actions',                    'BP_Follow_Blogs_Screens::action_handler' );
 		add_action( 'bp_actions',                    'BP_Follow_Blogs_Screens::rss_handler' );
+		add_action( 'wp_ajax_bp_follow_blogs',       'BP_Follow_Blogs_Screens::ajax_handler' );
 
 		// directory tabs.
 		add_action( 'bp_before_activity_type_tab_favorites', array( $this, 'add_activity_directory_tab' ) );
@@ -53,7 +54,8 @@ class BP_Follow_Blogs {
 
 		// button injection.
 		add_action( 'bp_directory_blogs_actions', array( $this, 'add_follow_button_to_loop' ),   20 );
-		add_action( 'wp_footer',                  array( $this, 'add_follow_button_to_footer' ), 999 );
+		add_action( 'wp_footer',                  array( $this, 'add_follow_button_to_footer' ) );
+		add_action( 'wp_enqueue_scripts',         array( $this, 'enqueue_script' ) );
 
 		// blog deletion.
 		add_action( 'bp_blogs_remove_blog', array( $this, 'on_blog_delete' ) );
@@ -486,7 +488,7 @@ class BP_Follow_Blogs {
 		foreach ( (array) $following as $is_following ) {
 			foreach ( (array) $blogs_template->blogs as $i => $blog ) {
 				// set follow status to true if the logged-in user is following.
-				if ( $is_following->leader_id === $blog->blog_id ) {
+				if ( (int) $is_following->leader_id === (int) $blog->blog_id ) {
 					$blogs_template->blogs[ $i ]->is_following = true;
 				}
 			}
@@ -496,6 +498,23 @@ class BP_Follow_Blogs {
 	}
 
 	/** BUTTON ********************************************************/
+
+	/**
+	 * Registers and enqueues our JS.
+	 */
+	public function enqueue_script() {
+		if ( ! is_user_logged_in() ) {
+			return;
+		}
+
+		// Register our script.
+		wp_register_script( 'bp-follow-blogs', BP_FOLLOW_URL . '_inc/modules/blogs.js', [ 'jquery' ], false, true );
+
+		// Nouveau requires early enqueuing on BP blog pages.
+		if ( function_exists( 'bp_nouveau' ) && bp_is_blogs_component() ) {
+			wp_enqueue_script( 'bp-follow-blogs' );
+		}
+	}
 
 	/**
 	 * Add a follow button to the blog loop.
@@ -519,6 +538,11 @@ class BP_Follow_Blogs {
 
 		// @todo might need to tweak this a bit...
 		if ( bp_is_root_blog() && ! bp_is_blog_page() ) {
+			$retval = false;
+		}
+
+		// Bail if JSON request. Mostly for block widget render calls.
+		if ( function_exists( 'wp_is_json_request' ) && wp_is_json_request() ) {
 			$retval = false;
 		}
 
@@ -595,8 +619,10 @@ class BP_Follow_Blogs {
 
 		<div id="bpf-blogs-ftr">
 			<?php echo self::get_button( array(
-				'leader_id' => get_current_blog_id(),
-				'wrapper'   => false,
+				'leader_id'     => get_current_blog_id(),
+				'follow_text'   => _x( 'Follow Site', 'Button', 'buddypress-followers' ),
+				'unfollow_text' => _x( 'Unfollow Site', 'Button', 'buddypress-followers' ),
+				'wrapper'       => false,
 			) ); ?>
 
  			<?php
@@ -626,15 +652,23 @@ class BP_Follow_Blogs {
 		$r = wp_parse_args( $args, array(
 			'leader_id'     => ! empty( $blogs_template->in_the_loop ) ? bp_get_blog_id() : get_current_blog_id(),
 			'follower_id'   => bp_loggedin_user_id(),
+			'follow_text'   => _x( 'Follow', 'Button', 'buddypress-followers' ),
+			'unfollow_text' => _x( 'Unfollow', 'Button', 'buddypress-followers' ),
 			'link_text'     => '',
 			'link_title'    => '',
-			'wrapper_class' => '',
+			'wrapper_class' => 'blog-button',
 			'link_class'    => '',
+			'button_attr'   => [],
 			'wrapper'       => 'div',
 		) );
 
 		if ( ! $r['leader_id'] || ! $r['follower_id'] ) {
 			return false;
+		}
+
+		// Enqueue JS only if BP 2.7+.
+		if ( class_exists( 'BP_Core_HTML_Element' ) ) {
+			wp_enqueue_script( 'bp-follow-blogs' );
 		}
 
 		// if we're checking during a blog loop, then follow status is already
@@ -651,33 +685,32 @@ class BP_Follow_Blogs {
 			) );
 		}
 
+		$button_attr = [
+			'data-follow-blog-id' => $r['leader_id'],
+		];
+
 		// setup some variables.
 		if ( $is_following ) {
 			$id        = 'following';
 			$action    = 'unfollow';
-			$link_text = _x( 'Unfollow', 'Button', 'buddypress-followers' );
-
-			if ( empty( $blogs_template->in_the_loop ) ) {
-				$link_text = _x( 'Unfollow Site', 'Button', 'buddypress-followers' );
-			}
 
 			if ( empty( $r['link_text'] ) ) {
-				$r['link_text'] = $link_text;
+				$r['link_text'] = $r['unfollow_text'];
 			}
 
 		} else {
 			$id        = 'not-following';
 			$action    = 'follow';
-			$link_text = _x( 'Follow', 'Button', 'buddypress-followers' );
-
-			if ( empty( $blogs_template->in_the_loop ) ) {
-				$link_text = _x( 'Follow Site', 'Button', 'buddypress-followers' );
-			}
 
 			if ( empty( $r['link_text'] ) ) {
-				$r['link_text'] = $link_text;
+				$r['link_text'] = $r['follow_text'];
 			}
 		}
+
+		$button_attr['data-follow-action'] = $action;
+		$button_attr['data-follow-nonce']  = wp_create_nonce( "bp_follow_blog_{$action}" );
+		$button_attr['data-follow-text']   = $r['follow_text'];
+		$button_attr['data-unfollow-text'] = $r['unfollow_text'];
 
 		$wrapper_class = 'follow-button ' . $id;
 
@@ -709,7 +742,15 @@ class BP_Follow_Blogs {
 			'link_id'           => $action . '-' . (int) $r['leader_id'],
 			'link_class'        => $link_class,
 			'wrapper'           => ! empty( $r['wrapper'] ) ? esc_attr( $r['wrapper'] ) : false,
+			'button_attr'       => $button_attr
 		);
+
+		// BP Nouveau-specific button arguments.
+		if ( function_exists( 'bp_nouveau' ) && ! empty( $blogs_template->in_the_loop ) ) {
+			$button['parent_element'] = 'li';
+			$button['wrapper_class']  = '';
+			$button['link_class']    .= ' button';
+		}
 
 		// Filter and return the HTML button.
 		return bp_get_button( apply_filters( 'bp_follow_blogs_get_follow_button', $button, $r, $is_following ) );
@@ -730,6 +771,87 @@ class BP_Follow_Blogs {
 		$this->clear_cache_on_blog_delete( $blog_id );
 
 		$wpdb->query( $wpdb->prepare( "DELETE FROM {$bp->follow->table_name} WHERE leader_id = %d AND follow_type = 'blogs'", $blog_id ) );
+	}
+
+	/**
+	 * Save routine.
+	 *
+	 * @param array $r {
+	 *     An array of arguments.
+	 *     @type string $action  Type of follow action. Either 'follow' or 'unfollow'.
+	 *     @type int    $blog_id Blog ID to follow or unfollow.
+	 *     @type int    $user_id User ID initiating the follow request.
+	 *     @type string $nonce   Nonce for the follow request.
+	 * }
+	 * @return bool|WP_Error Boolean true on success; WP_Error on failure.
+	 */
+	public static function save( $r = [] ) {
+		if ( empty( $r['action'] ) || empty( $r['nonce'] ) || empty( $r['blog_id'] ) ) {
+			return new WP_Error( 'empty', __( 'Missing required arguments', 'buddypress-followers' ) );
+		}
+
+		$action  = 'follow';
+		$save    = 'bp_follow_start_following';
+		$blog_id = (int) $r['blog_id'];
+		$user_id = ! empty( $r['user_id'] ) ? (int) $r['user_id'] : bp_loggedin_user_id();
+
+		if ( empty( $user_id ) ) {
+			return new WP_Error( 'no_user_id', __( 'Missing user ID', 'buddypress-followers' ) );
+		}
+
+		if ( 'unfollow' === $r['action'] ) {
+			$action = 'unfollow';
+			$save   = 'bp_follow_stop_following';
+		}
+
+		if ( ! wp_verify_nonce( $r['nonce'], "bp_follow_blog_{$action}" ) ) {
+			return new WP_Error( 'nonce', __( 'Nonce failure', 'buddypress-followers' ) );
+		}
+
+		if ( ! $save( array(
+			'leader_id'   => $blog_id,
+			'follower_id' => $user_id,
+			'follow_type' => 'blogs',
+		) ) ) {
+			if ( 'follow' === $action ) {
+				$error_code = 'already_following';
+				$message    = __( 'You are already following that blog.', 'buddypress-followers' );
+
+				if ( (int) $user_id !== bp_loggedin_user_id() ) {
+					$message = sprintf( __( '%s is already following that blog.', 'buddypress-followers' ), bp_core_get_user_displayname( $user_id ) );
+				}
+			} else {
+				$error_code = 'not_following';
+				$message    = __( 'You are not following that blog.', 'buddypress-followers' );
+
+				if ( (int) $user_id !== bp_loggedin_user_id() ) {
+					$message = sprintf( __( '%s is not following that blog.', 'buddypress-followers' ), bp_core_get_user_displayname( $user_id ) );
+				}
+			}
+
+			return new WP_Error( $error_code, $message );
+
+		// success on follow action
+		} else {
+			$blog_name = bp_blogs_get_blogmeta( $blog_id, 'name' );
+
+			// blog has never been recorded into BP; record it now.
+			if ( '' === $blog_name && apply_filters( 'bp_follow_blogs_record_blog', true, $blog_id ) ) {
+				// get the admin of the blog.
+				$admin = get_users( array(
+					'blog_id' => $blog_id,
+					'role'    => 'administrator',
+					'orderby' => 'ID',
+					'number'  => 1,
+					'fields'  => array( 'ID' ),
+				) );
+
+				// record the blog.
+				bp_blogs_record_blog( $blog_id, $admin[0]->ID, true );
+			}
+
+			return true;
+		}
 	}
 
 	/** CACHE **************************************************************/
@@ -966,53 +1088,27 @@ class BP_Follow_Blogs_Screens {
 		if ( ! empty( $_GET['bpfb-follow'] ) || ! empty( $_GET['bpfb-unfollow'] ) ) {
 			$nonce   = ! empty( $_GET['bpfb-follow'] ) ? $_GET['bpfb-follow'] : $_GET['bpfb-unfollow'];
 			$action  = ! empty( $_GET['bpfb-follow'] ) ? 'follow' : 'unfollow';
-			$save    = ! empty( $_GET['bpfb-follow'] ) ? 'bp_follow_start_following' : 'bp_follow_stop_following';
 		}
 
 		if ( ! $action ) {
 			return;
 		}
 
-		if ( ! wp_verify_nonce( $nonce, "bp_follow_blog_{$action}" ) ) {
-			return;
-		}
+		$save = BP_Follow_Blogs::save( [
+			'action' => $action,
+			'nonce'  => $nonce,
+			'blog_id' => (int) $_GET['blog_id']
+		] );
 
-		if ( ! $save( array(
-			'leader_id'   => (int) $_GET['blog_id'],
-			'follower_id' => bp_loggedin_user_id(),
-			'follow_type' => 'blogs',
-		) ) ) {
-			if ( 'follow' == $action ) {
-				$message = __( 'You are already following that blog.', 'buddypress-followers' );
+		if ( is_wp_error( $save ) ) {
+			if ( 'already_following' === $save->get_error_code() || 'not_following' === $save->get_error_code() ) {
+				bp_core_add_message( $save->get_error_message(), 'error' );
 			} else {
-				$message = __( 'You are not following that blog.', 'buddypress-followers' );
+				return;
 			}
 
-			bp_core_add_message( $message, 'error' );
-
-		// success on follow action
 		} else {
 			$blog_name = bp_blogs_get_blogmeta( (int) $_GET['blog_id'], 'name' );
-
-			// blog has never been recorded into BP; record it now.
-			if ( '' === $blog_name && apply_filters( 'bp_follow_blogs_record_blog', true, (int) $_GET['blog_id'] ) ) {
-				// get the admin of the blog.
-				$admin = get_users( array(
-					'blog_id' => get_current_blog_id(),
-					'role'    => 'administrator',
-					'orderby' => 'ID',
-					'number'  => 1,
-					'fields'  => array( 'ID' ),
-				) );
-
-				// record the blog.
-				$record_site = bp_blogs_record_blog( (int) $_GET['blog_id'], $admin[0]->ID, true );
-
-				// now refetch the blog name from blogmeta.
-				if ( false !== $record_site ) {
-					$blog_name = bp_blogs_get_blogmeta( (int) $_GET['blog_id'], 'name' );
-				}
-			}
 
 			if ( 'follow' === $action ) {
 				if ( ! empty( $blog_name ) ) {
@@ -1036,4 +1132,41 @@ class BP_Follow_Blogs_Screens {
 		bp_core_redirect( $redirect );
 	}
 
+	/**
+	 * AJAX handler.
+	 */
+	public static function ajax_handler() {
+		$data = json_decode( stripslashes( $_POST['followData'] ) );
+		if ( empty( $data ) ) {
+			wp_send_json_error();
+		}
+
+		$save = BP_Follow_Blogs::save( [
+			'action'  => $data->followAction,
+			'nonce'   => $data->followNonce,
+			'blog_id' => $data->followBlogId
+		] );
+
+		// Error during follow action. Render invalid button for AJAX response.
+		if ( is_wp_error( $save ) ) {
+			$button = bp_get_button( [
+				'id'        => 'invalid',
+				'link_href' => 'javascript:;',
+				'component' => 'follow',
+				'wrapper'   => false,
+				'link_text' => esc_html__( 'Error', 'buddypress-followers' )
+			] );
+
+		// Success! Render follow button for AJAX response.
+		} else {
+			$button = BP_Follow_Blogs::get_button( [
+				'leader_id'     => $data->followBlogId,
+				'follow_text'   => $data->followText,
+				'unfollow_text' => $data->unfollowText,
+				'wrapper'       => false
+			] );
+		}
+
+		wp_send_json_success( [ 'button' => $button ] );
+	}
 }

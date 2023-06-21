@@ -40,7 +40,7 @@ function bp_follow_user_setup_nav( $main_nav = array(), $sub_nav = array() ) {
 	/** FOLLOWERS NAV ************************************************/
 
 	bp_core_new_nav_item( array(
-		'name'                => sprintf( __( 'Following <span>%d</span>', 'buddypress-followers' ), bp_follow_get_the_following_count( array( 'user_id' => $user_id ) ) ),
+		'name'                => sprintf( __( 'Following <span class="count">%d</span>', 'buddypress-followers' ), bp_follow_get_the_following_count( array( 'user_id' => $user_id ) ) ),
 		'slug'                => $bp->follow->following->slug,
 		'position'            => $bp->follow->params['adminbar_myaccount_order'],
 		'screen_function'     => 'bp_follow_screen_following',
@@ -51,7 +51,7 @@ function bp_follow_user_setup_nav( $main_nav = array(), $sub_nav = array() ) {
 	/** FOLLOWING NAV ************************************************/
 
 	bp_core_new_nav_item( array(
-		'name'                => sprintf( __( 'Followers <span>%d</span>', 'buddypress-followers' ), bp_follow_get_the_followers_count( array( 'user_id' => $user_id ) ) ),
+		'name'                => sprintf( __( 'Followers <span class="count">%d</span>', 'buddypress-followers' ), bp_follow_get_the_followers_count( array( 'user_id' => $user_id ) ) ),
 		'slug'                => $bp->follow->followers->slug,
 		'position'            => apply_filters( 'bp_follow_followers_nav_position', 62 ),
 		'screen_function'     => 'bp_follow_screen_followers',
@@ -562,17 +562,28 @@ add_action( 'bp_members_directory_member_types', 'bp_follow_add_following_tab' )
  *
  * @since 1.3.0
  *
- * @param BP_User_Query $query
+ * @param BP_User_Query $q
  */
-function bp_follow_pre_user_query( $query ) {
+function bp_follow_pre_user_query( $q ) {
+	if ( 'oldest-follows' !== $q->query_vars['type'] && 'newest-follows' !== $q->query_vars['type'] ) {
+		return;
+	}
+
+	$q->total_users = count( $q->query_vars['include'] );
+
 	// oldest follows.
-	if ( 'oldest-follows' === $query->query_vars['type'] ) {
+	if ( 'oldest-follows' === $q->query_vars['type'] ) {
 		// flip the order.
-		$query->query_vars['user_ids'] = array_reverse( wp_parse_id_list( $query->query_vars['include'] ) );
+		$q->query_vars['user_ids'] = array_reverse( wp_parse_id_list( $q->query_vars['include'] ) );
 
 	// newest follows.
-	} elseif ( 'newest-follows' === $query->query_vars['type'] ) {
-		$query->query_vars['user_ids'] = $query->query_vars['include'];
+	} elseif ( 'newest-follows' === $q->query_vars['type'] ) {
+		$q->query_vars['user_ids'] = $q->query_vars['include'];
+	}
+
+	// Manual pagination. Eek!
+	if ( ! empty( $q->query_vars['page'] ) ) {
+		$q->query_vars['user_ids'] = array_splice( $q->query_vars['user_ids'], $q->query_vars['per_page'] * ( $q->query_vars['page'] - 1 ), $q->query_vars['per_page'] );
 	}
 }
 add_action( 'bp_pre_user_query_construct', 'bp_follow_pre_user_query' );
@@ -671,13 +682,19 @@ function bp_follow_add_member_scope_filter( $qs, $object ) {
 		return $qs;
 	}
 
+	// Parse querystring into array.
+	$r = wp_parse_args( $qs );
+
 	$set = false;
 
 	// members directory
 	// can't use bp_is_members_directory() yet since that's a BP 2.0 function.
 	if ( ! bp_is_user() && bp_is_members_component() ) {
+		// Check for existing scope.
+		$scope = ! empty( $r['scope'] ) && 'following' === $r['scope'] ? true : false;
+
 		// check if members scope is following before manipulating.
-		if ( isset( $_COOKIE['bp-members-scope'] ) && 'following' === $_COOKIE['bp-members-scope'] ) {
+		if ( $scope || ( isset( $_COOKIE['bp-members-scope'] ) && 'following' === $_COOKIE['bp-members-scope'] ) ) {
 			$set = true;
 			$action = 'following';
 		}
@@ -696,36 +713,54 @@ function bp_follow_add_member_scope_filter( $qs, $object ) {
 	// filter the members loop based on the current page.
 	switch ( $action ) {
 		case 'following':
-			// parse querystring into an array.
-			$qs = wp_parse_args( $qs );
-
-			$qs['include'] = bp_get_following_ids( array(
+			$r['include'] = bp_follow_get_following( array(
 				'user_id' => bp_displayed_user_id() ? bp_displayed_user_id() : bp_loggedin_user_id(),
 			) );
-			$qs['per_page'] = apply_filters( 'bp_follow_per_page', 20 );
-
-			return $qs;
 
 			break;
 
 		case 'followers':
-			// parse querystring into an array.
-			$qs = wp_parse_args( $qs );
-
-			$qs['include'] = bp_get_follower_ids();
-			$qs['per_page'] = apply_filters( 'bp_follow_per_page', 20 );
-
-			return $qs;
-
-			break;
-
-		default:
-			return $qs;
+			$r['include'] = bp_follow_get_followers();
 
 			break;
 	}
+
+	/**
+	 * Number of users to display on a user's Following or Followers page.
+	 *
+	 * @since 1.2.2
+	 *
+	 * @param int $retval
+	 */
+	$r['per_page'] = apply_filters( 'bp_follow_per_page', 20 );
+
+	return $r;
 }
 add_filter( 'bp_ajax_querystring', 'bp_follow_add_member_scope_filter', 20, 2 );
+
+/**
+ * Set pagination parameters when on a user Follow page for Nouveau.
+ *
+ * Nouveau has its own pagination routine...
+ *
+ * @since 1.3.0
+ *
+ * @param  array  $r    Current pagination arguments.
+ * @param  string $type Pagination type.
+ * @return array
+ */
+function bp_follow_set_pagination_for_nouveau( $r, $type ) {
+	if ( $GLOBALS['bp']->follow->following->slug !== $type && $GLOBALS['bp']->follow->followers->slug !== $type ) {
+		return $r;
+	}
+
+	return array(
+		'pag_count' => bp_get_members_pagination_count(),
+		'pag_links' => bp_get_members_pagination_links(),
+		'page_arg'  => $GLOBALS['members_template']->pag_arg
+	);
+}
+add_filter( 'bp_nouveau_pagination_params', 'bp_follow_set_pagination_for_nouveau', 10, 2 );
 
 /**
  * Set some default parameters for a member loop.
